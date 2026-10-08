@@ -1,0 +1,5 @@
+[D-BUS Service]
+Name=com.microsoft.identity.devicebroker1
+Exec=/usr/bin/false
+User=root
+SystemdService=microsoft-identity-device-broker.service

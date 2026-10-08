@@ -1,0 +1,19 @@
+[Unit]
+Description=Experimental ARM64 Microsoft Identity Broker
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionEnvironment=DISPLAY
+
+[Service]
+Type=dbus
+BusName=com.microsoft.identity.broker1
+ExecStart="@RUNTIME@/run" microsoft-identity-broker
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=90s
+TimeoutStopSec=20s
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=graphical-session.target

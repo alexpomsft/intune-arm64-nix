@@ -1,0 +1,13 @@
+[Unit]
+Description=ARM64 Intune check-in after graphical login and hourly
+PartOf=graphical-session.target
+
+[Timer]
+OnActiveSec=5min
+OnUnitActiveSec=1h
+RandomizedDelaySec=60s
+AccuracySec=30s
+Unit=intune-agent.service
+
+[Install]
+WantedBy=graphical-session.target

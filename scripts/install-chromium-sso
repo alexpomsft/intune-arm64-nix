@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+
+REVISION = "e25c215735b8b365ceb7b5f395480119230970c4"
+EXTENSION_ID = "jlnfnnolkbjieggibinobhkjdfbpcohn"
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Install reviewed upstream SSO host for the signed Chromium extension")
+    parser.add_argument("source", type=Path, help="siemens/linux-entra-sso checkout")
+    parser.add_argument("--profile-root", type=Path,
+                        default=Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "chromium")
+    args = parser.parse_args()
+    if os.geteuid() == 0:
+        raise RuntimeError("Install this user-only host as your normal desktop user")
+    import gi
+    import pydbus
+
+    source = args.source.resolve()
+    revision = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
+    if revision != REVISION:
+        raise RuntimeError("Upstream checkout differs from the reviewed SSO revision")
+    subprocess.run(["git", "-C", str(source), "diff", "--exit-code", "HEAD", "--",
+                    "linux-entra-sso.py", "platform/chrome/manifest.json", "LICENSES/MPL-2.0.txt"],
+                   check=True, stdout=subprocess.DEVNULL)
+    profile = args.profile_root.expanduser().resolve()
+    host = profile / "linux-entra-sso"
+    manifest = profile / "NativeMessagingHosts/linux_entra_sso.json"
+    license_path = profile / "linux-entra-sso.MPL-2.0.txt"
+    for path in (host, manifest, license_path):
+        if path.exists() or path.is_symlink():
+            raise RuntimeError(f"Refusing to replace existing Chromium host artifact: {path.name}")
+    version = json.loads((source / "platform/chrome/manifest.json").read_text())["version"]
+    code = (source / "linux-entra-sso.py").read_text()
+    _, separator, body = code.partition("\n")
+    if not separator:
+        raise RuntimeError("Unexpected upstream host source")
+    code = "#!/usr/bin/python3\n" + body.replace('"0.0.0-dev"', json.dumps(version), 1)
+    os.umask(0o077)
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    with host.open("x") as stream:
+        stream.write(code)
+    host.chmod(0o700)
+    with license_path.open("x") as stream:
+        stream.write((source / "LICENSES/MPL-2.0.txt").read_text())
+    with manifest.open("x") as stream:
+        json.dump({
+            "name": "linux_entra_sso",
+            "description": "Entra ID SSO via the existing Microsoft Identity Broker",
+            "path": str(host),
+            "type": "stdio",
+            "allowed_origins": [f"chrome-extension://{EXTENSION_ID}/"],
+        }, stream, indent=2)
+        stream.write("\n")
+    print("Installed ARM64-native Python SSO host for the signed Linux Entra SSO extension only")
+    print("Chromium profiles/cookies, enrollment, PAM and keyrings were not reset")
+    print("Reload the extension, select the broker account, then retry a fresh Microsoft login")
+
+
+if __name__ == "__main__":
+    main()

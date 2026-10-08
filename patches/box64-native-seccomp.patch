@@ -1,0 +1,238 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4098f33..771b157 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -797,6 +797,7 @@ set(WRAPPEDS
+     "${BOX64_ROOT}/src/wrapped/wrappedsdl1sound.c"
+     "${BOX64_ROOT}/src/wrapped/wrappedsdl1ttf.c"
+     "${BOX64_ROOT}/src/wrapped/wrappedsecret1.c"
++    "${BOX64_ROOT}/src/wrapped/wrappedseccomp.c"
+     "${BOX64_ROOT}/src/wrapped/wrappedsoftokn3.c"
+     "${BOX64_ROOT}/src/wrapped/wrappedsmpeg.c"
+     "${BOX64_ROOT}/src/wrapped/wrappedsdl2.c"
+@@ -1377,7 +1378,7 @@ if(NOT NOBOX64)
+     if(DYNAREC)
+         target_link_libraries(${BOX64} dynarec)
+     endif()
+-    target_link_libraries(${BOX64} interpreter)
++    target_link_libraries(${BOX64} interpreter seccomp)
+ 
+     if(${CMAKE_VERSION} VERSION_LESS "3.13")
+         if(NOT NOLOADADDR)
+diff --git a/src/emu/x64printer.c b/src/emu/x64printer.c
+index 7654cb6..6f5aefc 100644
+--- a/src/emu/x64printer.c
++++ b/src/emu/x64printer.c
+@@ -4696,6 +4696,8 @@ void x64Print(x64emu_t* emu, char* buff, size_t buffsz, const char* func, int ti
+         snprintf(buff, buffsz, "%04d|%p: Calling %s(%" PRIp ", %" PRIi32 ", %" PRIp ", %" PRIp ", %" PRIi32 ")", tid, *(void**)(R_RSP), func, (void*)R_RDI, (int32_t)R_RSI, (void*)R_RDX, (void*)R_RCX, (int32_t)R_R8);
+     } else if (w == iFEpIppp) {
+         snprintf(buff, buffsz, "%04d|%p: Calling %s(%" PRIp ", %" PRIi64 ", %" PRIp ", %" PRIp ", %" PRIp ")", tid, *(void**)(R_RSP), func, (void*)R_RDI, (int64_t)R_RSI, (void*)R_RDX, (void*)R_RCX, (void*)R_R8);
++    } else if (w == iFEpuiuV) {
++        snprintf(buff, buffsz, "%04d|%p: Calling %s(%" PRIp ", %" PRIu32 ", %" PRIi32 ", %" PRIu32 ", %" PRIp ")", tid, *(void**)(R_RSP), func, (void*)R_RDI, (uint32_t)R_RSI, (int32_t)R_RDX, (uint32_t)R_RCX, (void*)(R_RSP + 8));
+     } else if (w == iFEpuipp) {
+         snprintf(buff, buffsz, "%04d|%p: Calling %s(%" PRIp ", %" PRIu32 ", %" PRIi32 ", %" PRIp ", %" PRIp ")", tid, *(void**)(R_RSP), func, (void*)R_RDI, (uint32_t)R_RSI, (int32_t)R_RDX, (void*)R_RCX, (void*)R_R8);
+     } else if (w == iFEpuppp) {
+diff --git a/src/librarian/library.c b/src/librarian/library.c
+index 1c5b044..adb66b9 100644
+--- a/src/librarian/library.c
++++ b/src/librarian/library.c
+@@ -470,7 +470,7 @@ static const char* essential_libs[] = {
+     "libXtst.so.6", "libXt.so.6", "libXcomposite.so.1", "libXdamage.so.1", "libXmu.so.6", "libxkbcommon.so.0",
+     "libxkbcommon-x11.so.0", "libpulse-simple.so.0", "libpulse.so.0", "libvulkan.so.1", "libvulkan.so",
+     "ld-linux-x86-64.so.2", "libtcmalloc_minimal.so.0", "libtcmalloc_minimal.so.4", "libanl.so.1",
+-    "ld-linux.so.2", "ld-linux.so.3", "libthread_db.so.1"
++    "ld-linux.so.2", "ld-linux.so.3", "libthread_db.so.1", "libseccomp.so.2"
+ };
+ static const char* essential_libs_egl[] = {
+     "libEGL.so", "libGLESv2.so"
+diff --git a/src/library_list.h b/src/library_list.h
+index bdfce6a..c4223f5 100644
+--- a/src/library_list.h
++++ b/src/library_list.h
+@@ -233,6 +233,7 @@ GO("libfreebl3.so", freebl3)
+ GO("libnsl.so.1", nsl)
+ GO("libselinux.so.1", selinux)
+ GO("libsecret-1.so.0", secret1)
++GO("libseccomp.so.2", seccomp)
+ GO("libpci.so.3", libpci)
+ GO("libgmp.so.10", gmp)
+ GO("libgmp.so", gmp)
+diff --git a/src/wrapped/generated/functions_list.txt b/src/wrapped/generated/functions_list.txt
+index c8525f1..795c5e8 100644
+--- a/src/wrapped/generated/functions_list.txt
++++ b/src/wrapped/generated/functions_list.txt
+@@ -2580,6 +2580,7 @@
+ #() iFEpipip
+ #() iFEpippi
+ #() iFEpIppp
++#() iFEpuiuV
+ #() iFEpuipp
+ #() iFEpuppp
+ #() iFEpLppp
+@@ -7466,6 +7467,9 @@ wrappedsdl3:
+ - uFUpp:
+   - SDL_AddTimerNS
+ wrappedsdl3ttf:
++wrappedseccomp:
++- iFpuiuV:
++  - seccomp_rule_add
+ wrappedsecret1:
+ wrappedselinux:
+ - pFi:
+diff --git a/src/wrapped/generated/wrapper.c b/src/wrapped/generated/wrapper.c
+index bf73138..545f224 100644
+--- a/src/wrapped/generated/wrapper.c
++++ b/src/wrapped/generated/wrapper.c
+@@ -2610,6 +2610,7 @@ typedef int32_t (*iFEpilpV_t)(x64emu_t*, void*, int32_t, intptr_t, void*, void*)
+ typedef int32_t (*iFEpipip_t)(x64emu_t*, void*, int32_t, void*, int32_t, void*);
+ typedef int32_t (*iFEpippi_t)(x64emu_t*, void*, int32_t, void*, void*, int32_t);
+ typedef int32_t (*iFEpIppp_t)(x64emu_t*, void*, int64_t, void*, void*, void*);
++typedef int32_t (*iFEpuiuV_t)(x64emu_t*, void*, uint32_t, int32_t, uint32_t, void*);
+ typedef int32_t (*iFEpuipp_t)(x64emu_t*, void*, uint32_t, int32_t, void*, void*);
+ typedef int32_t (*iFEpuppp_t)(x64emu_t*, void*, uint32_t, void*, void*, void*);
+ typedef int32_t (*iFEpLppp_t)(x64emu_t*, void*, uintptr_t, void*, void*, void*);
+@@ -6898,6 +6899,7 @@ void iFEpilpV(x64emu_t *emu, uintptr_t fcn) { iFEpilpV_t fn = (iFEpilpV_t)fcn; R
+ void iFEpipip(x64emu_t *emu, uintptr_t fcn) { iFEpipip_t fn = (iFEpipip_t)fcn; R_RAX=(int)fn(emu, (void*)R_RDI, (int32_t)R_RSI, (void*)R_RDX, (int32_t)R_RCX, (void*)R_R8); }
+ void iFEpippi(x64emu_t *emu, uintptr_t fcn) { iFEpippi_t fn = (iFEpippi_t)fcn; R_RAX=(int)fn(emu, (void*)R_RDI, (int32_t)R_RSI, (void*)R_RDX, (void*)R_RCX, (int32_t)R_R8); }
+ void iFEpIppp(x64emu_t *emu, uintptr_t fcn) { iFEpIppp_t fn = (iFEpIppp_t)fcn; R_RAX=(int)fn(emu, (void*)R_RDI, (int64_t)R_RSI, (void*)R_RDX, (void*)R_RCX, (void*)R_R8); }
++void iFEpuiuV(x64emu_t *emu, uintptr_t fcn) { iFEpuiuV_t fn = (iFEpuiuV_t)fcn; R_RAX=(int)fn(emu, (void*)R_RDI, (uint32_t)R_RSI, (int32_t)R_RDX, (uint32_t)R_RCX, (void*)(R_RSP + 8)); }
+ void iFEpuipp(x64emu_t *emu, uintptr_t fcn) { iFEpuipp_t fn = (iFEpuipp_t)fcn; R_RAX=(int)fn(emu, (void*)R_RDI, (uint32_t)R_RSI, (int32_t)R_RDX, (void*)R_RCX, (void*)R_R8); }
+ void iFEpuppp(x64emu_t *emu, uintptr_t fcn) { iFEpuppp_t fn = (iFEpuppp_t)fcn; R_RAX=(int)fn(emu, (void*)R_RDI, (uint32_t)R_RSI, (void*)R_RDX, (void*)R_RCX, (void*)R_R8); }
+ void iFEpLppp(x64emu_t *emu, uintptr_t fcn) { iFEpLppp_t fn = (iFEpLppp_t)fcn; R_RAX=(int)fn(emu, (void*)R_RDI, (uintptr_t)R_RSI, (void*)R_RDX, (void*)R_RCX, (void*)R_R8); }
+diff --git a/src/wrapped/generated/wrapper.h b/src/wrapped/generated/wrapper.h
+index 0d6c831..6cc1470 100644
+--- a/src/wrapped/generated/wrapper.h
++++ b/src/wrapped/generated/wrapper.h
+@@ -2618,6 +2618,7 @@ void iFEpilpV(x64emu_t *emu, uintptr_t fnc);
+ void iFEpipip(x64emu_t *emu, uintptr_t fnc);
+ void iFEpippi(x64emu_t *emu, uintptr_t fnc);
+ void iFEpIppp(x64emu_t *emu, uintptr_t fnc);
++void iFEpuiuV(x64emu_t *emu, uintptr_t fnc);
+ void iFEpuipp(x64emu_t *emu, uintptr_t fnc);
+ void iFEpuppp(x64emu_t *emu, uintptr_t fnc);
+ void iFEpLppp(x64emu_t *emu, uintptr_t fnc);
+diff --git a/src/wrapped/wrappedseccomp.c b/src/wrapped/wrappedseccomp.c
+new file mode 100644
+index 0000000..11e493e
+--- /dev/null
++++ b/src/wrapped/wrappedseccomp.c
+@@ -0,0 +1,48 @@
++// SPDX-License-Identifier: MIT
++#define _GNU_SOURCE
++#include <errno.h>
++#include <seccomp.h>
++#include <stddef.h>
++#include <stdint.h>
++#include <stdlib.h>
++
++#include "wrappedlibs.h"
++#include "wrapper.h"
++#include "bridge.h"
++#include "librarian/library_private.h"
++#include "x64emu.h"
++#include "emu/x64emu_private.h"
++#include "debug.h"
++
++const char* seccompName = "libseccomp.so.2";
++#define LIBNAME seccomp
++
++_Static_assert(sizeof(struct scmp_arg_cmp) == 24, "Unexpected seccomp argument ABI");
++
++EXPORT int my_seccomp_rule_add(x64emu_t* emu, void* ctx, uint32_t action,
++                              int syscall_number, unsigned int count, void* varargs)
++{
++    (void)varargs;
++    if(count > 6) {
++        printf_log(LOG_NONE, "Invalid seccomp comparison count: %u\n", count);
++        return -EINVAL;
++    }
++    char* name = seccomp_syscall_resolve_num_arch(SCMP_ARCH_X86_64, syscall_number);
++    if(!name) {
++        printf_log(LOG_NONE, "Unknown x86-64 seccomp syscall: %d\n", syscall_number);
++        return -EDOM;
++    }
++    int native_number = seccomp_syscall_resolve_name(name);
++    if(native_number == __NR_SCMP_ERROR) {
++        printf_log(LOG_NONE, "No native seccomp mapping for %s\n", name);
++        free(name);
++        return -EDOM;
++    }
++    free(name);
++    // x86-64 passes these 24-byte variadic structs entirely on the stack.
++    const struct scmp_arg_cmp* arguments =
++        count ? (const struct scmp_arg_cmp*)(emu->regs[_SP].q[0] + 8) : NULL;
++    return seccomp_rule_add_array(ctx, action, native_number, count, arguments);
++}
++
++#include "wrappedlib_init.h"
+diff --git a/src/wrapped/wrappedseccomp_private.h b/src/wrapped/wrappedseccomp_private.h
+new file mode 100644
+index 0000000..5d2a282
+--- /dev/null
++++ b/src/wrapped/wrappedseccomp_private.h
+@@ -0,0 +1,9 @@
++// SPDX-License-Identifier: MIT
++#if !(defined(GO) && defined(GOM) && defined(GO2) && defined(DATA))
++#error Wrapper macros are required
++#endif
++
++GO(seccomp_init, pFu)
++GO(seccomp_release, vFp)
++GO(seccomp_export_bpf, iFpi)
++GOM(seccomp_rule_add, iFEpuiuV)
+diff --git a/src/wrapped/generated/wrappedseccompdefs.h b/src/wrapped/generated/wrappedseccompdefs.h
+new file mode 100644
+index 0000000..d4efd62
+--- /dev/null
++++ b/src/wrapped/generated/wrappedseccompdefs.h
+@@ -0,0 +1,9 @@
++// SPDX-License-Identifier: MIT
++/*******************************************************************
++ * File automatically generated by rebuild_wrappers.py (v2.5.0.24) *
++ *******************************************************************/
++#ifndef __wrappedseccompDEFS_H_
++#define __wrappedseccompDEFS_H_
++
++
++#endif // __wrappedseccompDEFS_H_
+diff --git a/src/wrapped/generated/wrappedseccomptypes.h b/src/wrapped/generated/wrappedseccomptypes.h
+new file mode 100644
+index 0000000..bab2b39
+--- /dev/null
++++ b/src/wrapped/generated/wrappedseccomptypes.h
+@@ -0,0 +1,20 @@
++// SPDX-License-Identifier: MIT
++/*******************************************************************
++ * File automatically generated by rebuild_wrappers.py (v2.5.0.24) *
++ *******************************************************************/
++#ifndef __wrappedseccompTYPES_H_
++#define __wrappedseccompTYPES_H_
++
++#ifndef LIBNAME
++#error You should only #include this file inside a wrapped*.c file
++#endif
++#ifndef ADDED_FUNCTIONS
++#define ADDED_FUNCTIONS() 
++#endif
++
++typedef int32_t (*iFpuiuV_t)(void*, uint32_t, int32_t, uint32_t, ...);
++
++#define SUPER() ADDED_FUNCTIONS() \
++	GO(seccomp_rule_add, iFpuiuV_t)
++
++#endif // __wrappedseccompTYPES_H_
+diff --git a/src/wrapped/generated/wrappedseccompundefs.h b/src/wrapped/generated/wrappedseccompundefs.h
+new file mode 100644
+index 0000000..7292d63
+--- /dev/null
++++ b/src/wrapped/generated/wrappedseccompundefs.h
+@@ -0,0 +1,9 @@
++// SPDX-License-Identifier: MIT
++/*******************************************************************
++ * File automatically generated by rebuild_wrappers.py (v2.5.0.24) *
++ *******************************************************************/
++#ifndef __wrappedseccompUNDEFS_H_
++#define __wrappedseccompUNDEFS_H_
++
++
++#endif // __wrappedseccompUNDEFS_H_

@@ -1,0 +1,13 @@
+{
+  "box64_commit": "2f47bdff3ae9b3b7fb462fea0579cd3e87551e75",
+  "microsoft_packages": {
+    "intune-portal": {
+      "version": "1.2609.5-noble",
+      "sha256": "9e98636a336ad61c0ba475b68d52861b5816382fc1fde7a7fc7d387989867a14"
+    },
+    "microsoft-identity-broker": {
+      "version": "3.0.2-noble",
+      "sha256": "03e60d7db7197e5903965c5df7b601ae1bdb72fce986ccfbcdbef2fda6f2c7f9"
+    }
+  }
+}

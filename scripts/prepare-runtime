@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+target="${1:-${XDG_DATA_HOME:-$HOME/.local/share}/intune-arm64}"
+if [[ "$(id -u)" == 0 ]]; then
+    printf 'Prepare the runtime as your normal desktop user, never root.\n' >&2
+    exit 1
+fi
+if [[ "$(uname -m)" != aarch64 ]]; then
+    printf 'This prototype requires an ARM64 Linux host.\n' >&2
+    exit 1
+fi
+if [[ -e "$target" ]]; then
+    printf 'Refusing to overwrite existing runtime: %s\n' "$target" >&2
+    exit 1
+fi
+for tool in git cmake ninja cc pkg-config python3 bsdtar bwrap; do
+    command -v "$tool" >/dev/null || { printf 'Missing prerequisite: %s\n' "$tool" >&2; exit 1; }
+done
+pkg-config --exists libseccomp
+mkdir -p "$target"
+target="$(cd -- "$target" && pwd)"
+cp -a "$repo/runtime/." "$target/"
+cp "$repo/patches/box64-native-seccomp.patch" "$target/"
+python3 "$target/fetch-microsoft.py"
+mapfile -t dependencies < "$target/dependency-seeds.txt"
+python3 "$target/fetch-libraries.py" "${dependencies[@]}" \
+    opensc opensc-pkcs11 p11-kit python3 libseccomp2 libgl1-mesa-dri
+
+revision="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["box64_commit"])' "$target/versions.json")"
+git init -q "$target/box64-src"
+git -C "$target/box64-src" remote add origin https://github.com/ptitSeb/box64.git
+git -C "$target/box64-src" fetch --quiet --depth=1 origin "$revision"
+git -C "$target/box64-src" checkout --quiet --detach FETCH_HEAD
+git -C "$target/box64-src" apply --check "$target/box64-native-seccomp.patch"
+git -C "$target/box64-src" apply "$target/box64-native-seccomp.patch"
+cmake -S "$target/box64-src" -B "$target/box64-build" -G Ninja \
+    -DM1=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DNO_LIB_INSTALL=ON -DNO_CONF_INSTALL=ON -DNO_BINFMT=ON
+cmake --build "$target/box64-build" -j "${INTUNE_BUILD_JOBS:-4}"
+python3 "$target/prepare-view.py"
+cc -O2 -Wall -Wextra -Werror "$target/WebKit-helper.c" -o "$target/WebKit-helper"
+cc -O2 -Wall -Wextra -Werror "$target/daemon-helper.c" -o "$target/daemon-helper"
+chmod 0700 "$target/run" "$target/WebKit-helper" "$target/daemon-helper"
+
+loader="$target/rootfs/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/gdk-pixbuf-query-loaders"
+"$target/run" "$loader" > "$target/pixbuf-loaders.cache"
+printf 'Prepared private runtime at %s. Run verify-webkit.py before signing in.\n' "$target"

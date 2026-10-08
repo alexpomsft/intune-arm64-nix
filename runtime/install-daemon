@@ -1,0 +1,34 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+target=/opt/intune-arm64
+if [[ "$(id -u)" != 0 ]]; then
+    printf 'Administrator authorization is required.\n' >&2
+    exit 1
+fi
+if [[ $# -ne 1 ]]; then
+    printf 'Usage: install-daemon RUNTIME\n' >&2
+    exit 2
+fi
+source="$(realpath -- "$1")"
+if [[ -e /etc/systemd/system/intune-daemon.service ||
+      -e /etc/systemd/system/intune-daemon.socket ||
+      -e /run/intune/daemon.socket ]]; then
+    printf 'Refusing to replace an existing Intune daemon installation.\n' >&2
+    exit 1
+fi
+if [[ ! -x "$target/rootfs/opt/microsoft/intune/bin/intune-daemon" ||
+      "$(stat -c %U "$target/rootfs/opt/microsoft/intune/bin/intune-daemon")" != root ]]; then
+    printf 'The root-owned Intune runtime is not available.\n' >&2
+    exit 1
+fi
+install -m0755 "$source/daemon-helper" "$target/view/lib/intune-arm64/daemon-helper"
+install -m0755 "$source/daemon-run" "$target/daemon-run"
+install -m0644 "$source/intune-daemon.service" /etc/systemd/system/intune-daemon.service
+install -m0644 "$source/intune-daemon.socket" /etc/systemd/system/intune-daemon.socket
+systemctl daemon-reload
+systemd-analyze verify /etc/systemd/system/intune-daemon.service \
+    /etc/systemd/system/intune-daemon.socket
+systemctl start intune-daemon.socket intune-daemon.service
+printf 'Intune daemon/socket started manually; boot activation and agent timer remain disabled.\n'

@@ -1,0 +1,73 @@
+#!/usr/bin/python3
+import os
+from pathlib import Path
+import stat
+import subprocess
+
+
+def main():
+    if os.geteuid() != 0:
+        raise SystemExit("Administrator authorization is required.")
+    source = Path(__file__).resolve().parent
+    for directory in (source, *source.parents):
+        info = directory.stat()
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            raise SystemExit("Startup installer must reside in a root-controlled directory.")
+    files = {
+        source / "device-broker-activation.service":
+            Path("/usr/share/dbus-1/system-services/com.microsoft.identity.devicebroker1.service"),
+        source / "intune-daemon.socket": Path("/etc/systemd/system/intune-daemon.socket"),
+        source / "device-broker-run": Path("/opt/intune-arm64/device-broker-run"),
+        source / "daemon-run": Path("/opt/intune-arm64/daemon-run"),
+        source / "intune-daemon.service": Path("/etc/systemd/system/intune-daemon.service"),
+    }
+    for path in (Path(__file__).resolve(), *files):
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+            raise SystemExit("Startup installation sources must be regular, root-owned and not group/other writable.")
+    for launcher in ("device-broker-run", "daemon-run"):
+        path = Path("/opt/intune-arm64") / launcher
+        info = path.stat()
+        if info.st_uid != 0 or info.st_mode & 0o022 or not os.access(path, os.X_OK):
+            raise SystemExit("The reviewed root-owned runtime must already be installed.")
+    broker = Path("/etc/systemd/system/microsoft-identity-device-broker.service").read_text()
+    daemon = Path("/etc/systemd/system/intune-daemon.service").read_text()
+    if "/opt/intune-arm64/device-broker-run" not in broker or "/opt/intune-arm64/daemon-run" not in daemon:
+        raise SystemExit("The system units do not belong to the experimental runtime.")
+    for path, target in files.items():
+        expected = path.read_text()
+        if target.is_symlink():
+            raise SystemExit("Refusing a symlinked activation/unit destination.")
+        if target.exists():
+            existing = target.read_text()
+            previous = expected
+            if target.name == "intune-daemon.socket":
+                previous = expected.split("\n[Install]")[0].rstrip() + "\n"
+            elif target.name in ("device-broker-run", "daemon-run"):
+                previous = expected.replace('    --tmpfs /opt \\\n', "")
+                previous = previous.replace('    --ro-bind "$base" "$base" \\\n', "")
+                previous = previous.replace('    --remount-ro /opt \\\n', "")
+            elif target.name == "intune-daemon.service":
+                previous = expected.replace("TimeoutStopSec=20\n", "")
+            if existing not in (expected, previous):
+                raise SystemExit("An existing startup file conflicts with this reviewed runtime.")
+    for path, target in files.items():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        mode = "0755" if target.name in ("device-broker-run", "daemon-run") else "0644"
+        subprocess.run(["/usr/bin/install", "-o", "root", "-g", "root", "-m", mode,
+                        str(path), str(target)], check=True)
+    subprocess.run(["systemctl", "daemon-reload"], check=True)
+    subprocess.run(["systemd-analyze", "verify", "/etc/systemd/system/intune-daemon.socket",
+                    "/etc/systemd/system/intune-daemon.service",
+                    "/etc/systemd/system/microsoft-identity-device-broker.service"], check=True)
+    subprocess.run(["busctl", "--system", "call", "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                    "org.freedesktop.DBus", "ReloadConfig"], check=True)
+    subprocess.run(["systemctl", "reset-failed", "microsoft-identity-device-broker.service",
+                    "intune-daemon.service"], check=True)
+    subprocess.run(["systemctl", "enable", "--now", "intune-daemon.socket"], check=True)
+    print("Device broker is system-D-Bus activated; daemon socket is enabled at boot.")
+    print("Authentication, keyrings, device identity and root caller validation were not changed.")
+
+
+if __name__ == "__main__":
+    main()

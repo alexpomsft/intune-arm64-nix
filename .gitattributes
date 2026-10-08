@@ -1,0 +1,2 @@
+# Unified diffs contain mandatory blank context markers and generated source.
+patches/*.patch -whitespace

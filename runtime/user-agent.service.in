@@ -1,0 +1,14 @@
+[Unit]
+Description=Verified ARM64 Intune agent check-in
+Wants=microsoft-identity-broker.service
+After=microsoft-identity-broker.service
+PartOf=graphical-session.target
+ConditionEnvironment=DISPLAY
+
+[Service]
+Type=oneshot
+Environment=INTUNE_COMPAT_OS=@COMPAT_OS@
+ExecStart=/usr/bin/python3 "@RUNTIME@/agent-checkin.py"
+TimeoutStartSec=5min
+UMask=0077
+NoNewPrivileges=yes

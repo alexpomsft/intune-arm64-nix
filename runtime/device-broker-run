@@ -1,0 +1,39 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+base=/opt/intune-arm64
+state=/var/lib/intune-arm64/device-broker
+export HOME="$state/home"
+export XDG_CONFIG_HOME="$state/config"
+export XDG_DATA_HOME="$state/data"
+export XDG_CACHE_HOME="$state/cache"
+export XDG_STATE_HOME="$state/state"
+export XDG_RUNTIME_DIR=/run/intune-arm64
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME"
+
+export BOX64_NORCFILES=1 BOX64_LOG=0 BOX64_PREFER_EMULATED=1 BOX64_DYNAREC=0
+export BOX64_LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu
+export BOX64_PATH=/opt/microsoft/identity-broker/bin
+export SSL_CERT_FILE=/etc/ssl/cert.pem SSL_CERT_DIR=/etc/ssl/certs
+export OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules
+export DOTNET_BUNDLE_EXTRACT_BASE_DIR="$state/dotnet"
+
+exec /usr/bin/bwrap \
+    --ro-bind / / \
+    --dev-bind /dev /dev \
+    --proc /proc \
+    --cap-drop ALL \
+    --bind /var/lib/intune-arm64 /var/lib/intune-arm64 \
+    --bind /run/intune-arm64 /run/intune-arm64 \
+    --bind /etc/microsoft/identity-broker /etc/microsoft/identity-broker \
+    --bind /tmp /tmp \
+    --tmpfs /opt \
+    --ro-bind "$base" "$base" \
+    --ro-bind "$base/view/lib" /usr/lib \
+    --ro-bind /usr/lib /usr/lib/arm64-host \
+    --ro-bind "$base/rootfs/usr/lib/x86_64-linux-gnu" /usr/lib/x86_64-linux-gnu \
+    --ro-bind "$base/rootfs/opt/microsoft" /opt/microsoft \
+    --remount-ro /opt \
+    /usr/lib/intune-arm64/box64 \
+    /opt/microsoft/identity-broker/bin/microsoft-identity-device-broker -q

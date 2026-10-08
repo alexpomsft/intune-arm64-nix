@@ -1,0 +1,54 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+target=/opt/intune-arm64
+if [[ "$(id -u)" != 0 ]]; then
+    printf 'This installer requires administrator authorization.\n' >&2
+    exit 1
+fi
+if [[ $# -lt 1 || $# -gt 2 || ( $# -eq 2 && "$2" != --configure-only ) ]]; then
+    printf 'Usage: install-device-broker RUNTIME [--configure-only]\n' >&2
+    exit 2
+fi
+source="$(realpath -- "$1")"
+shift
+
+if [[ $# -eq 0 ]]; then
+    if [[ -e "$target/rootfs" || -e /etc/microsoft/identity-broker ]]; then
+        printf 'Refusing to overwrite an existing runtime or device identity directory.\n' >&2
+        exit 1
+    fi
+    install -d -m0700 "$target/stage"
+    cp -a "$source/rootfs" "$target/stage/rootfs"
+    cp -a "$source/view" "$target/stage/view"
+    chown -Rh root:root "$target/stage"
+    chmod -R a-s,go-w "$target/stage"
+    cmp "$source/view/lib/intune-arm64/box64" "$target/stage/view/lib/intune-arm64/box64"
+    cmp "$source/rootfs/opt/microsoft/identity-broker/bin/microsoft-identity-device-broker" \
+        "$target/stage/rootfs/opt/microsoft/identity-broker/bin/microsoft-identity-device-broker"
+    mv "$target/stage/rootfs" "$target/rootfs"
+    mv "$target/stage/view" "$target/view"
+    rmdir "$target/stage"
+    install -m0755 "$source/device-broker-run" "$target/device-broker-run"
+fi
+if [[ ! -x "$target/device-broker-run" ]] ||
+    [[ -n "$(find "$target/rootfs" "$target/view" "$target/device-broker-run" ! -user root -print -quit)" ]]; then
+    printf 'The staged runtime is missing or is not entirely root-owned.\n' >&2
+    exit 1
+fi
+
+if [[ ! -d /etc/microsoft ]]; then
+    install -d -m0755 /etc/microsoft
+fi
+install -d -m0755 /etc/microsoft/identity-broker/certs
+install -d -m0700 /etc/microsoft/identity-broker/private
+install -d -m0755 /etc/dbus-1/system.d
+install -m0644 "$source/rootfs/usr/share/dbus-1/system.d/com.microsoft.identity.devicebroker1.conf" \
+    /etc/dbus-1/system.d/com.microsoft.identity.devicebroker1.conf
+install -m0644 "$source/microsoft-identity-device-broker.service" \
+    /etc/systemd/system/microsoft-identity-device-broker.service
+systemctl daemon-reload
+busctl call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ReloadConfig
+systemctl start microsoft-identity-device-broker.service
+printf 'Root-owned device broker staged and started; D-Bus activation is not installed yet.\n'

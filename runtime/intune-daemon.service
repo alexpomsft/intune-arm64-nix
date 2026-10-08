@@ -1,0 +1,23 @@
+[Unit]
+Description=Experimental ARM64 Intune daemon
+Requires=intune-daemon.socket
+After=intune-daemon.socket
+
+[Service]
+ExecStart=/opt/intune-arm64/daemon-run
+StateDirectory=intune intune-arm64
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+DevicePolicy=closed
+DeviceAllow=block-* r
+ReadWritePaths=/run/intune
+LimitCORE=0
+TimeoutStartSec=60
+TimeoutStopSec=20

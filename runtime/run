@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -euo pipefail
+umask 077
+
+base="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+host_runtime="${XDG_RUNTIME_DIR:?}"
+export HOME="$base/state/home"
+export XDG_CONFIG_HOME="$base/state/config"
+export XDG_DATA_HOME="$base/state/data"
+export XDG_CACHE_HOME="$base/state/cache"
+export XDG_STATE_HOME="$base/state/state"
+export XDG_RUNTIME_DIR="$base/state/run"
+mkdir -p "$HOME" "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME" "$XDG_RUNTIME_DIR" \
+    "$XDG_STATE_HOME/intune" "$XDG_RUNTIME_DIR/intune" "$host_runtime/intune"
+
+export BOX64_NORCFILES=1
+export BOX64_LOG="${BOX64_LOG:-0}"
+export BOX64_PREFER_EMULATED=1
+# Network helpers always interpret; the UI can use the dynamic recompiler.
+export BOX64_DYNAREC="${BOX64_DYNAREC:-0}"
+export BOX64_LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:$base/rootfs/usr/lib:$base/rootfs/lib"
+export BOX64_PATH="$base/rootfs/usr/bin:$base/rootfs/bin"
+export GNOME_KEYRING_CONTROL="$host_runtime/keyring"
+export XDG_DATA_DIRS="$base/rootfs/usr/share:/usr/local/share:/usr/share"
+export GSETTINGS_SCHEMA_DIR="$base/rootfs/usr/share/glib-2.0/schemas"
+export GDK_PIXBUF_MODULE_FILE="$base/pixbuf-loaders.cache"
+export OPENSC_CONF="$base/rootfs/etc/opensc/opensc.conf"
+export OPENSSL_MODULES="$base/rootfs/usr/lib/x86_64-linux-gnu/ossl-modules"
+export SSL_CERT_FILE=/etc/ssl/cert.pem
+export SSL_CERT_DIR=/etc/ssl/certs
+export FONTCONFIG_FILE=/etc/fonts/fonts.conf
+export GDK_BACKEND=x11
+export WEBKIT_DISABLE_COMPOSITING_MODE=1
+export WEBKIT_FORCE_SANDBOX=1
+export LIBGL_ALWAYS_SOFTWARE=1
+# JavaScriptCore's libpas allocator and JIT fail under this translated runtime.
+export Malloc=1
+export JSC_useJIT=false
+export JSC_useWasm=false
+
+case "${1:-}" in
+    intune-portal|intune-agent|intune-daemon)
+        program="$base/rootfs/opt/microsoft/intune/bin/$1"
+        if [[ "$1" == intune-portal ]]; then
+            export BOX64_DYNAREC=1
+        fi
+        ;;
+    microsoft-identity-broker|microsoft-identity-device-broker)
+        program="$base/rootfs/opt/microsoft/identity-broker/bin/$1"
+        ;;
+    /*)
+        program="$1"
+        ;;
+    *)
+        printf 'Unknown experimental program: %s\n' "${1:-<missing>}" >&2
+        exit 2
+        ;;
+esac
+shift
+identity_mounts=()
+log_mounts=()
+case "${INTUNE_PRIVATE_LOG:-}" in
+    "")
+        ;;
+    1)
+        log_mounts=(--tmpfs /run/systemd/journal)
+        ;;
+    *)
+        printf 'Unknown Intune private logging mode: %s\n' "$INTUNE_PRIVATE_LOG" >&2
+        exit 2
+        ;;
+esac
+case "${INTUNE_COMPAT_OS:-}" in
+    "")
+        ;;
+    ubuntu24.04)
+        printf 'Experimental Intune-only Ubuntu identity; host remains Arch ARM, unsupported by Microsoft.\n' >&2
+        identity_mounts=(
+            --ro-bind "$base/compat-os-release" /usr/lib/arm64-host/os-release
+        )
+        ;;
+    *)
+        printf 'Unknown Intune compatibility identity: %s\n' "$INTUNE_COMPAT_OS" >&2
+        exit 2
+        ;;
+esac
+exec /usr/bin/bwrap \
+    --ro-bind / / \
+    --dev-bind /dev /dev \
+    --proc /proc \
+    --bind "$base/state" "$base/state" \
+    --bind "$XDG_RUNTIME_DIR/intune" "$host_runtime/intune" \
+    --bind /tmp /tmp \
+    --ro-bind "$base/view/lib" /usr/lib \
+    --ro-bind /usr/lib /usr/lib/arm64-host \
+    --ro-bind "$base/rootfs/usr/lib/x86_64-linux-gnu" /usr/lib/x86_64-linux-gnu \
+    --ro-bind "$base/WebKit-helper" /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitWebProcess \
+    --ro-bind "$base/WebKit-helper" /usr/lib/x86_64-linux-gnu/webkit2gtk-4.1/WebKitNetworkProcess \
+    --ro-bind "$base/rootfs/etc/fonts" /etc/fonts \
+    "${identity_mounts[@]}" \
+    "${log_mounts[@]}" \
+    /usr/lib/intune-arm64/box64 "$program" "$@"

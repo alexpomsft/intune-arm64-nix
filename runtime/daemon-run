@@ -1,0 +1,39 @@
+#!/bin/bash
+set -euo pipefail
+umask 077
+
+base=/opt/intune-arm64
+state=/var/lib/intune-arm64/daemon
+if [[ "${LISTEN_FDS:-0}" != 1 ]]; then
+    printf 'Intune daemon requires its systemd socket.\n' >&2
+    exit 1
+fi
+mkdir -p "$state/home" "$state/config" "$state/data" "$state/cache" "$state/state"
+
+exec /usr/bin/env -i \
+    PATH=/usr/bin:/bin LANG=C.UTF-8 \
+    HOME="$state/home" XDG_CONFIG_HOME="$state/config" \
+    XDG_DATA_HOME="$state/data" XDG_CACHE_HOME="$state/cache" \
+    XDG_STATE_HOME="$state/state" \
+    BOX64_NORCFILES=1 BOX64_LOG=0 BOX64_PREFER_EMULATED=1 BOX64_DYNAREC=0 \
+    BOX64_LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu \
+    SSL_CERT_FILE=/etc/ssl/cert.pem SSL_CERT_DIR=/etc/ssl/certs \
+    OPENSSL_MODULES=/usr/lib/x86_64-linux-gnu/ossl-modules \
+    LISTEN_FDS=1 \
+    /usr/bin/bwrap \
+    --ro-bind / / \
+    --dev-bind /dev /dev \
+    --proc /proc \
+    --cap-drop ALL \
+    --bind /var/lib/intune /var/lib/intune \
+    --bind /var/lib/intune-arm64 /var/lib/intune-arm64 \
+    --bind /run/intune /run/intune \
+    --bind /tmp /tmp \
+    --tmpfs /opt \
+    --ro-bind "$base" "$base" \
+    --ro-bind "$base/view/lib" /usr/lib \
+    --ro-bind /usr/lib /usr/lib/arm64-host \
+    --ro-bind "$base/rootfs/usr/lib/x86_64-linux-gnu" /usr/lib/x86_64-linux-gnu \
+    --ro-bind "$base/rootfs/opt/microsoft" /opt/microsoft \
+    --remount-ro /opt \
+    /usr/lib/intune-arm64/daemon-helper
